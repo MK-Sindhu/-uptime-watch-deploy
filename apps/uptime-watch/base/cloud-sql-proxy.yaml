@@ -1,0 +1,49 @@
+# Added to api, pusher and the migration job (see kustomization.yaml).
+#
+# The Cloud SQL Auth Proxy runs next to the app as a native sidecar (an init
+# container that keeps running): it starts first, the app connects to
+# 127.0.0.1:5432, and the proxy opens an encrypted, IAM-checked connection to
+# Cloud SQL. In the Job it stops by itself once the migration finishes.
+- op: add
+  path: /spec/template/spec/initContainers
+  value:
+    - name: cloud-sql-proxy
+      image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.26.0
+      restartPolicy: Always
+      env:
+        - name: CSQL_PROXY_INSTANCE_CONNECTION_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: uptime-watch-config
+              key: CLOUDSQL_INSTANCE
+        - name: CSQL_PROXY_PORT
+          value: "5432"
+        - name: CSQL_PROXY_STRUCTURED_LOGS
+          value: "true"
+        # /startup, /readiness and /liveness on port 9090 for the probes
+        - name: CSQL_PROXY_HEALTH_CHECK
+          value: "true"
+        - name: CSQL_PROXY_HTTP_ADDRESS
+          value: 0.0.0.0
+      startupProbe:
+        httpGet:
+          path: /startup
+          port: 9090
+        periodSeconds: 1
+        failureThreshold: 60
+      livenessProbe:
+        httpGet:
+          path: /liveness
+          port: 9090
+        periodSeconds: 10
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]

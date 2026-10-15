@@ -1,0 +1,39 @@
+# Renders the Kustomize overlay and checks every manifest against the
+# Kubernetes and CRD schemas, on pull requests and on every commit to main
+# (including the image bumps from uptime-watch's CD).
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Render the production overlay
+        run: |
+          mkdir -p rendered
+          kubectl kustomize apps/uptime-watch/overlays/production > rendered/production.yaml
+
+      # SecretStore is skipped: kubeconform can't load its published schema.
+      # Its fields (spec.provider.gcpsm.projectID) are checked by Argo CD's
+      # dry run against the real CRD instead.
+      - name: Check against Kubernetes and CRD schemas
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/yannh/kubeconform:v0.8.0 \
+            -strict -summary -output text \
+            -kubernetes-version 1.33.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -skip SecretStore \
+            /repo/rendered/production.yaml /repo/argocd/apps /repo/bootstrap/root-app.yaml

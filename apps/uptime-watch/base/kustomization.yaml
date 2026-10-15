@@ -1,0 +1,52 @@
+# Everything uptime-watch runs in Kubernetes. Environment-specific values
+# (project, database, domain, image tags) live in overlays/production.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: uptime-watch
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: uptime-watch
+
+resources:
+  - namespace.yaml
+  - service-account.yaml
+  - secrets.yaml
+  - migrate-job.yaml
+  - api.yaml
+  - pusher.yaml
+  - workers.yaml
+  - fe.yaml
+  - ingress.yaml
+
+# Settings every service reads as environment variables. A change gives the
+# ConfigMap a new name (hash suffix), so the pods using it roll over.
+configMapGenerator:
+  - name: uptime-watch-config
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-2"
+    literals:
+      - PORT=3000
+      - CHECK_INTERVAL_SECONDS=30
+      - JWT_EXPIRES_IN=7d
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_DB=uptime
+      # Region rows the migration job makes sure exist; each needs a worker
+      # Deployment in workers.yaml.
+      - REGIONS=region1,region2
+      # Which proxies may set X-Forwarded-For: the pod network plus Google's
+      # load balancer (35.191.0.0/16, 130.211.0.0/22). The overlay adds the
+      # load balancer's own address. Without these, every visitor would share
+      # one rate-limit bucket.
+      - TRUST_PROXY=loopback, linklocal, uniquelocal, 35.191.0.0/16, 130.211.0.0/22
+      # Set in the overlay: PROJECT:REGION:INSTANCE of the Cloud SQL database.
+      - CLOUDSQL_INSTANCE=
+
+# The Cloud SQL Auth Proxy sidecar for every workload labelled
+# uptime-watch/cloud-sql: "true" (api, pusher, migrate). Defined once in
+# cloud-sql-proxy.yaml.
+patches:
+  - path: cloud-sql-proxy.yaml
+    target:
+      labelSelector: uptime-watch/cloud-sql=true

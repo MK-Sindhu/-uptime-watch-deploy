@@ -1,0 +1,6 @@
+# kubectl kustomize output from local checks
+rendered/
+# step 10 of the README creates these; they must never be committed
+deploy_key
+deploy_key.pub
+.DS_Store

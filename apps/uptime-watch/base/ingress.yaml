@@ -1,0 +1,34 @@
+# The public entry point: a Google external Application Load Balancer on a
+# reserved static IP (uptime-watch-ip), with a Google-managed TLS
+# certificate, redirecting http to https. Every path goes to fe.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: uptime-watch
+  annotations:
+    kubernetes.io/ingress.class: gce
+    kubernetes.io/ingress.global-static-ip-name: uptime-watch-ip
+    networking.gke.io/managed-certificates: uptime-watch
+    networking.gke.io/v1beta1.FrontendConfig: uptime-watch
+spec:
+  defaultBackend:
+    service:
+      name: fe
+      port:
+        number: 3000
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: uptime-watch
+spec:
+  domains:
+    - set-in-overlay.example.com
+---
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: uptime-watch
+spec:
+  redirectToHttps:
+    enabled: true

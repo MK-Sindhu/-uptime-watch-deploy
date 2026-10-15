@@ -1,0 +1,54 @@
+# Production on GKE. Every value specific to your Google Cloud project is in
+# this file; replace each REPLACE_ME (and replace-me.example.com) before the
+# first sync (see README.md).
+#
+# The `images` block is updated by CI (uptime-watch/.github/workflows/cd.yml)
+# on every push to main: newName is the Artifact Registry path, newTag the
+# commit SHA. Argo CD notices the commit and rolls it out.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: uptime-watch/api
+    newName: asia-south1-docker.pkg.dev/REPLACE_ME_PROJECT_ID/uptime-watch/api
+    newTag: not-built-yet
+  - name: uptime-watch/worker
+    newName: asia-south1-docker.pkg.dev/REPLACE_ME_PROJECT_ID/uptime-watch/worker
+    newTag: not-built-yet
+  - name: uptime-watch/pusher
+    newName: asia-south1-docker.pkg.dev/REPLACE_ME_PROJECT_ID/uptime-watch/pusher
+    newTag: not-built-yet
+  - name: uptime-watch/migrate
+    newName: asia-south1-docker.pkg.dev/REPLACE_ME_PROJECT_ID/uptime-watch/migrate
+    newTag: not-built-yet
+  - name: uptime-watch/fe
+    newName: asia-south1-docker.pkg.dev/REPLACE_ME_PROJECT_ID/uptime-watch/fe
+    newTag: not-built-yet
+configMapGenerator:
+  - name: uptime-watch-config
+    behavior: merge
+    literals:
+      # gcloud sql instances describe uptime-watch --format='value(connectionName)'
+      - CLOUDSQL_INSTANCE=REPLACE_ME_PROJECT_ID:asia-south1:uptime-watch
+      # The base list plus the load balancer's address:
+      # gcloud compute addresses describe uptime-watch-ip --global --format='value(address)'
+      - TRUST_PROXY=loopback, linklocal, uniquelocal, 35.191.0.0/16, 130.211.0.0/22, REPLACE_ME_STATIC_IP
+patches:
+  # Where the secrets live: the Google Cloud project ID.
+  - target:
+      kind: SecretStore
+      name: gcp-secret-manager
+    patch: |-
+      - op: replace
+        path: /spec/provider/gcpsm/projectID
+        value: REPLACE_ME_PROJECT_ID
+  # The site's domain, with an A record pointing at the static IP. No domain?
+  # Use <static-ip>.sslip.io, e.g. 34.120.10.20.sslip.io.
+  - target:
+      kind: ManagedCertificate
+      name: uptime-watch
+    patch: |-
+      - op: replace
+        path: /spec/domains/0
+        value: replace-me.example.com

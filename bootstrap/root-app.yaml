@@ -1,0 +1,23 @@
+# The one Application you create by hand ("app of apps"). It points Argo CD
+# at argocd/apps/, and every Application in that folder (External Secrets,
+# KEDA, uptime-watch) is then created and kept in sync from git.
+#
+#   kubectl apply -f bootstrap/root-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/MK-Sindhu/uptime-watch-deploy.git
+    targetRevision: main
+    path: argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

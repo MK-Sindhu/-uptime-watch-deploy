@@ -1,0 +1,36 @@
+# The app itself. Every commit to apps/uptime-watch/overlays/production
+# (CI bumps the image tags there) is rolled out automatically:
+#   wave -4..-2  namespace, service account, secrets, config
+#   wave -1      the migration Job (must succeed before anything else changes)
+#   wave  0      Deployments, Services, autoscalers, ingress
+#
+# The first syncs can fail until External Secrets and KEDA (wave -1 in the
+# root app) have installed their CRDs; the retry below covers that.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: uptime-watch
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/MK-Sindhu/uptime-watch-deploy.git
+    targetRevision: main
+    path: apps/uptime-watch/overlays/production
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: uptime-watch
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

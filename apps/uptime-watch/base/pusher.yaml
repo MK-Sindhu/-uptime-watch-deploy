@@ -1,0 +1,54 @@
+# Queues every website once per CHECK_INTERVAL_SECONDS. Exactly one may run:
+# a second pusher would make every check happen twice. `Recreate` stops the
+# old pod before starting the new one during a deploy.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pusher
+  labels:
+    app.kubernetes.io/name: pusher
+    uptime-watch/cloud-sql: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pusher
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pusher
+    spec:
+      serviceAccountName: uptime-watch
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pusher
+          image: uptime-watch/pusher
+          envFrom:
+            - configMapRef:
+                name: uptime-watch-config
+            - secretRef:
+                name: uptime-watch
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

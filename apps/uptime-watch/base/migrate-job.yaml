@@ -1,0 +1,54 @@
+# Brings the Postgres schema in line with the app (`prisma db update`) and
+# makes sure the region rows exist, on every sync, before the new pods start.
+#
+# Argo CD runs it as a Sync hook in wave -1: after the config and secrets
+# (wave -2), before the Deployments (wave 0), and waits for it to succeed.
+# `db update --no-interactive` refuses any change that would lose data, so a
+# destructive schema change fails the deploy instead of dropping a column.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  labels:
+    app.kubernetes.io/name: migrate
+    uptime-watch/cloud-sql: "true"
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: migrate
+    spec:
+      serviceAccountName: uptime-watch
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: uptime-watch/migrate
+          envFrom:
+            - configMapRef:
+                name: uptime-watch-config
+            - secretRef:
+                name: uptime-watch
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            # prisma db update rewrites packages/store/migrations/app/refs
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: [ALL]

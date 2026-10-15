@@ -1,0 +1,123 @@
+# The Next.js frontend: the only service the internet reaches (ingress.yaml).
+# It forwards /api/* to the api Service; the image has API_URL=http://api:3000.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fe
+  labels:
+    app.kubernetes.io/name: fe
+spec:
+  # No `replicas`: the HorizontalPodAutoscaler below owns it.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fe
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fe
+          image: uptime-watch/fe
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/apps/fe/.next/cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: next-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fe
+  annotations:
+    # Load balancer -> pods directly (container-native load balancing)
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default": "fe"}'
+spec:
+  selector:
+    app.kubernetes.io/name: fe
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+# How Google's load balancer treats the fe backend: its health check, and
+# the Cloud Armor policy (rate limiting and blocking at Google's edge,
+# before traffic reaches the cluster).
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: fe
+spec:
+  healthCheck:
+    type: HTTP
+    requestPath: /
+    port: 3000
+  securityPolicy:
+    name: uptime-watch-armor
+  connectionDraining:
+    drainingTimeoutSec: 30
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fe
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fe
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fe
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fe

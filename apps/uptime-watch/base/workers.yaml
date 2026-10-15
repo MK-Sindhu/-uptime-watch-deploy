@@ -1,0 +1,191 @@
+# One worker Deployment per region. Each region is its own consumer group on
+# the Redis stream, so every region checks every website; inside a region the
+# pods share the work.
+#
+# KEDA scales each region on its consumer group's lag (checks queued but not
+# yet picked up): one more pod per 20 waiting checks, between 1 and 5 pods.
+#
+# To add a region: copy one Deployment + ScaledObject pair below, change
+# region1 everywhere, and add the name to REGIONS in kustomization.yaml. To
+# run a region somewhere else (another cluster or GCP region), deploy only
+# its pair there.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: redis
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: uptime-watch
+      key: REDIS_PASSWORD
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-region1
+  labels:
+    app.kubernetes.io/name: worker
+    uptime-watch/region: region1
+spec:
+  # No `replicas`: KEDA owns it.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+      uptime-watch/region: region1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+        uptime-watch/region: region1
+    spec:
+      serviceAccountName: uptime-watch
+      # A batch takes at most one 10 s check; the worker finishes it on SIGTERM.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: uptime-watch/worker
+          env:
+            - name: REGION_ID
+              value: region1
+            # Read by KEDA (addressFromEnv) as well as the worker.
+            - name: REDIS_ADDRESS
+              valueFrom:
+                secretKeyRef:
+                  name: uptime-watch
+                  key: REDIS_ADDRESS
+          envFrom:
+            - configMapRef:
+                name: uptime-watch-config
+            - secretRef:
+                name: uptime-watch
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-region1
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  scaleTargetRef:
+    name: worker-region1
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  cooldownPeriod: 120
+  triggers:
+    - type: redis-streams
+      metadata:
+        addressFromEnv: REDIS_ADDRESS
+        stream: uptime-watch:website
+        consumerGroup: region1
+        lagCount: "20"
+        activationLagCount: "1"
+      authenticationRef:
+        name: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-region2
+  labels:
+    app.kubernetes.io/name: worker
+    uptime-watch/region: region2
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+      uptime-watch/region: region2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+        uptime-watch/region: region2
+    spec:
+      serviceAccountName: uptime-watch
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: uptime-watch/worker
+          env:
+            - name: REGION_ID
+              value: region2
+            - name: REDIS_ADDRESS
+              valueFrom:
+                secretKeyRef:
+                  name: uptime-watch
+                  key: REDIS_ADDRESS
+          envFrom:
+            - configMapRef:
+                name: uptime-watch-config
+            - secretRef:
+                name: uptime-watch
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-region2
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  scaleTargetRef:
+    name: worker-region2
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  cooldownPeriod: 120
+  triggers:
+    - type: redis-streams
+      metadata:
+        addressFromEnv: REDIS_ADDRESS
+        stream: uptime-watch:website
+        consumerGroup: region2
+        lagCount: "20"
+        activationLagCount: "1"
+      authenticationRef:
+        name: redis
